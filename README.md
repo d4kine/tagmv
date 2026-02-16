@@ -17,7 +17,8 @@ Options:
   -V, --version   Print version
 
 Subcommands:
-  install         Install macOS Finder Quick Action
+  install         Install file manager context menu
+  uninstall       Remove file manager context menu
 ```
 
 ### Dry-run preview
@@ -44,44 +45,40 @@ Summary: 39 files -> 7 folders, 0 unsorted
 $ tagmv --execute "/path/to/music"
 ```
 
-### Finder Quick Action setup
+### Context menu integration
 
-1. Build and install the binary:
+```
+tagmv install       # add "Sort Music by Tags" to your file manager
+tagmv uninstall     # remove it
+```
 
-   ```
-   cargo build --release
-   cp target/release/tagmv ~/bin/
-   ```
+`tagmv install` auto-detects the OS and installs the appropriate integration:
 
-2. Install the Quick Action workflow:
+**macOS** -- Finder Quick Action (Automator workflow)
 
-   ```
-   ~/bin/tagmv install
-   ```
+After running `tagmv install`:
+1. Open **System Settings -> Privacy & Security -> Extensions -> Finder**
+2. Enable **Sort Music by Tags**
+3. If it doesn't appear, run `killall Finder`
+4. Right-click a folder -> **Quick Actions** -> **Sort Music by Tags**
 
-3. Enable the extension in macOS:
+**Linux** -- Nautilus, Nemo, and Dolphin
 
-   - Open **System Settings -> Privacy & Security -> Extensions -> Finder**
-     (on older macOS: **System Preferences -> Extensions -> Finder Extensions**)
-   - Check **Sort Music by Tags**
+Installs context menu entries for all three file managers:
+- Nautilus (GNOME): `~/.local/share/nautilus/scripts/Sort Music by Tags`
+- Nemo (Cinnamon): `~/.local/share/nemo/actions/tagmv.nemo_action`
+- Dolphin (KDE): `~/.local/share/kio/servicemenus/tagmv.desktop`
 
-4. If the action doesn't appear, refresh Finder:
+Right-click a folder -> **Scripts** or **Actions** -> **Sort Music by Tags**
 
-   ```
-   killall Finder
-   ```
+**Windows** -- Explorer context menu (registry)
 
-5. Use it: right-click a folder in Finder -> **Quick Actions** -> **Sort Music by Tags**
+Adds entries under `HKCU\Software\Classes\Directory\shell\tagmv` (no admin needed).
+Right-click a folder in Explorer -> **Sort Music by Tags**
 
-> **Note:** The Quick Action runs in execute mode (`--execute`) immediately --
+> **Note:** The context menu runs in execute mode (`--execute`) immediately --
 > there is no dry-run preview. Run `tagmv <path>` from the terminal first
-> to preview changes before using the Quick Action.
-
-To uninstall the Quick Action:
-
-```
-rm -rf ~/Library/Services/Sort\ Music\ by\ Tags.workflow
-```
+> to preview changes.
 
 ## Sorting rules
 

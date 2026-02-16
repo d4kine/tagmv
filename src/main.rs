@@ -37,8 +37,10 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Install macOS Finder Quick Action
+    /// Install file manager context menu integration
     Install,
+    /// Remove file manager context menu integration
+    Uninstall,
 }
 
 fn is_audio_file(path: &Path) -> bool {
@@ -99,8 +101,10 @@ fn scan_files(dir: &Path, recursive: bool) -> Result<Vec<PathBuf>> {
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
-    if let Some(Commands::Install) = cli.command {
-        return install::install_quick_action();
+    match cli.command {
+        Some(Commands::Install) => return install::install_quick_action(),
+        Some(Commands::Uninstall) => return install::uninstall_quick_action(),
+        None => {}
     }
 
     let dir = match cli.path {

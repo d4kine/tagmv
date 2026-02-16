@@ -1,21 +1,51 @@
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use std::fs;
 use std::path::PathBuf;
 
-const WORKFLOW_NAME: &str = "Sort Music by Tags";
+const MENU_LABEL: &str = "Sort Music by Tags";
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
 
 fn home_dir() -> Result<PathBuf> {
-    std::env::var("HOME")
-        .map(PathBuf::from)
-        .ok()
-        .filter(|p| p.is_absolute())
-        .context("$HOME is not set or is not an absolute path")
+    // Try $HOME first (works on macOS, Linux, and sometimes Windows)
+    if let Ok(home) = std::env::var("HOME") {
+        let p = PathBuf::from(&home);
+        if p.is_absolute() {
+            return Ok(p);
+        }
+    }
+    // Windows fallback
+    if let Ok(profile) = std::env::var("USERPROFILE") {
+        let p = PathBuf::from(&profile);
+        if p.is_absolute() {
+            return Ok(p);
+        }
+    }
+    bail!("Could not determine home directory ($HOME / %USERPROFILE% not set)")
 }
 
-fn workflow_dir() -> Result<PathBuf> {
-    Ok(home_dir()?
-        .join("Library/Services")
-        .join(format!("{}.workflow", WORKFLOW_NAME)))
+fn exe_path() -> Result<(PathBuf, String)> {
+    let exe = std::env::current_exe().context("Failed to determine current executable path")?;
+    let exe_str = exe.to_string_lossy().to_string();
+    Ok((exe, exe_str))
+}
+
+fn warn_if_build_dir(exe_str: &str) {
+    let in_target = exe_str.contains("/target/") || exe_str.contains("\\target\\");
+    if in_target {
+        eprintln!("Warning: You are running from a build directory.");
+        eprintln!("Consider copying the binary to a stable location first:");
+        if cfg!(target_os = "windows") {
+            eprintln!("  copy {} %USERPROFILE%\\bin\\tagmv.exe", exe_str);
+            eprintln!("  %USERPROFILE%\\bin\\tagmv.exe install");
+        } else {
+            eprintln!("  cp {} ~/bin/tagmv", exe_str);
+            eprintln!("  ~/bin/tagmv install");
+        }
+        eprintln!();
+    }
 }
 
 /// Escape a string for safe embedding in XML text content.
@@ -34,9 +64,7 @@ fn xml_escape(s: &str) -> String {
     out
 }
 
-/// Shell-escape a path for embedding in a single-quoted zsh string.
-/// Single quotes cannot appear inside single-quoted strings in sh/zsh,
-/// so we break out and splice them as double-quoted.
+/// Shell-escape a path for embedding in a single-quoted sh/zsh string.
 fn shell_escape(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 2);
     out.push('\'');
@@ -51,10 +79,91 @@ fn shell_escape(s: &str) -> String {
     out
 }
 
-fn document_wflow(binary_path: &str) -> String {
+// ---------------------------------------------------------------------------
+// Public entry points
+// ---------------------------------------------------------------------------
+
+pub fn install_quick_action() -> Result<()> {
+    if cfg!(target_os = "macos") {
+        install_macos()
+    } else if cfg!(target_os = "linux") {
+        install_linux()
+    } else if cfg!(target_os = "windows") {
+        install_windows()
+    } else {
+        bail!("Unsupported platform for context menu installation")
+    }
+}
+
+pub fn uninstall_quick_action() -> Result<()> {
+    if cfg!(target_os = "macos") {
+        uninstall_macos()
+    } else if cfg!(target_os = "linux") {
+        uninstall_linux()
+    } else if cfg!(target_os = "windows") {
+        uninstall_windows()
+    } else {
+        bail!("Unsupported platform for context menu removal")
+    }
+}
+
+// ===========================================================================
+// macOS -- Automator Quick Action
+// ===========================================================================
+
+fn macos_workflow_dir() -> Result<PathBuf> {
+    Ok(home_dir()?
+        .join("Library/Services")
+        .join(format!("{}.workflow", MENU_LABEL)))
+}
+
+fn install_macos() -> Result<()> {
+    let (exe, exe_str) = exe_path()?;
+    warn_if_build_dir(&exe_str);
+
+    let wf_dir = macos_workflow_dir()?;
+    let contents_dir = wf_dir.join("Contents");
+
+    if wf_dir.exists() {
+        fs::remove_dir_all(&wf_dir).with_context(|| {
+            format!("Failed to remove existing workflow at {}", wf_dir.display())
+        })?;
+    }
+
+    fs::create_dir_all(&contents_dir)
+        .with_context(|| format!("Failed to create {}", contents_dir.display()))?;
+
+    fs::write(contents_dir.join("document.wflow"), macos_document_wflow(&exe_str))
+        .context("Failed to write document.wflow")?;
+    fs::write(contents_dir.join("Info.plist"), macos_info_plist())
+        .context("Failed to write Info.plist")?;
+
+    println!("Installed macOS Quick Action: \"{}\"", MENU_LABEL);
+    println!("  Location: {}", wf_dir.display());
+    println!("  Binary:   {}", exe.display());
+    println!();
+    println!("Next steps:");
+    println!("  1. Open System Settings -> Privacy & Security -> Extensions -> Finder");
+    println!("  2. Enable \"{}\"", MENU_LABEL);
+    println!("  3. If it doesn't appear, run: killall Finder");
+    println!();
+    println!("Usage: Right-click a folder in Finder -> Quick Actions -> \"{}\"", MENU_LABEL);
+    Ok(())
+}
+
+fn uninstall_macos() -> Result<()> {
+    let wf_dir = macos_workflow_dir()?;
+    if wf_dir.exists() {
+        fs::remove_dir_all(&wf_dir)?;
+        println!("Removed: {}", wf_dir.display());
+    } else {
+        println!("Nothing to remove (workflow not found)");
+    }
+    Ok(())
+}
+
+fn macos_document_wflow(binary_path: &str) -> String {
     let shell_safe = shell_escape(binary_path);
-    // The shell script is embedded inside XML, so the shell-escaped path
-    // also needs XML escaping for the plist.
     let xml_safe_script = xml_escape(&format!(
         "for f in \"$@\"; do\n  if [ -d \"$f\" ]; then\n    {} --execute \"$f\"\n  fi\ndone",
         shell_safe
@@ -293,7 +402,7 @@ fn document_wflow(binary_path: &str) -> String {
     )
 }
 
-fn info_plist() -> &'static str {
+fn macos_info_plist() -> &'static str {
     r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -329,60 +438,175 @@ fn info_plist() -> &'static str {
 </plist>"#
 }
 
-pub fn install_quick_action() -> Result<()> {
-    let exe = std::env::current_exe().context("Failed to determine current executable path")?;
-    let exe_str = exe.to_string_lossy();
+// ===========================================================================
+// Linux -- Nautilus script + Nemo action + Dolphin service menu
+// ===========================================================================
 
-    // Warn if running from a build directory
-    if exe_str.contains("/target/") {
-        eprintln!("Warning: You are running from a build directory.");
-        eprintln!("Consider copying the binary to a stable location first:");
-        eprintln!("  cp {} ~/bin/tagmv", exe.display());
-        eprintln!("  ~/bin/tagmv install");
-        eprintln!();
+fn linux_paths() -> Result<(PathBuf, PathBuf, PathBuf)> {
+    let data = home_dir()?.join(".local/share");
+    Ok((
+        data.join("nautilus/scripts").join(MENU_LABEL),
+        data.join("nemo/actions/tagmv.nemo_action"),
+        data.join("kio/servicemenus/tagmv.desktop"),
+    ))
+}
+
+fn install_linux() -> Result<()> {
+    let (exe, exe_str) = exe_path()?;
+    warn_if_build_dir(&exe_str);
+
+    let escaped = shell_escape(&exe_str);
+    let (nautilus_path, nemo_path, dolphin_path) = linux_paths()?;
+
+    // --- Nautilus (GNOME Files) ---
+    if let Some(parent) = nautilus_path.parent() {
+        fs::create_dir_all(parent)?;
     }
-
-    let wf_dir = workflow_dir()?;
-    let contents_dir = wf_dir.join("Contents");
-
-    // Remove existing workflow if present
-    if wf_dir.exists() {
-        fs::remove_dir_all(&wf_dir).with_context(|| {
-            format!(
-                "Failed to remove existing workflow at {}",
-                wf_dir.display()
-            )
-        })?;
-    }
-
-    fs::create_dir_all(&contents_dir)
-        .with_context(|| format!("Failed to create {}", contents_dir.display()))?;
-
-    fs::write(
-        contents_dir.join("document.wflow"),
-        document_wflow(&exe_str),
-    )
-    .context("Failed to write document.wflow")?;
-
-    fs::write(contents_dir.join("Info.plist"), info_plist())
-        .context("Failed to write Info.plist")?;
-
-    println!("Installed Quick Action: \"{}\"", WORKFLOW_NAME);
-    println!("  Location: {}", wf_dir.display());
-    println!("  Binary:   {}", exe.display());
-    println!();
-    println!("Next steps:");
-    println!("  1. Open System Settings -> Privacy & Security -> Extensions -> Finder");
-    println!("  2. Enable \"{}\"", WORKFLOW_NAME);
-    println!("  3. If it doesn't appear, run: killall Finder");
-    println!();
-    println!(
-        "Usage: Right-click a folder in Finder -> Quick Actions -> \"{}\"",
-        WORKFLOW_NAME
+    let nautilus_script = format!(
+        "#!/bin/bash\nIFS=$'\\n'\nfor f in $NAUTILUS_SCRIPT_SELECTED_FILE_PATHS; do\n  [ -d \"$f\" ] && {} --execute \"$f\"\ndone\n",
+        escaped
     );
+    fs::write(&nautilus_path, &nautilus_script)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&nautilus_path, fs::Permissions::from_mode(0o755))?;
+    }
+    println!("  Nautilus: {}", nautilus_path.display());
 
+    // --- Nemo (Cinnamon) ---
+    if let Some(parent) = nemo_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let nemo_action = format!(
+        "[Nemo Action]\nName={}\nComment=Organize music files by audio tags\nExec={} --execute %F\nIcon-Name=audio-x-generic\nSelection=Any\nExtensions=dir;\n",
+        MENU_LABEL, exe_str
+    );
+    fs::write(&nemo_path, &nemo_action)?;
+    println!("  Nemo:     {}", nemo_path.display());
+
+    // --- Dolphin (KDE) ---
+    if let Some(parent) = dolphin_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let dolphin_desktop = format!(
+        "[Desktop Entry]\nType=Service\nMimeType=inode/directory;\nActions=tagmv\n\n[Desktop Action tagmv]\nName={}\nExec={} --execute %f\nIcon=audio-x-generic\n",
+        MENU_LABEL, exe_str
+    );
+    fs::write(&dolphin_path, &dolphin_desktop)?;
+    println!("  Dolphin:  {}", dolphin_path.display());
+
+    println!();
+    println!("Installed context menu for Nautilus, Nemo, and Dolphin.");
+    println!("  Binary: {}", exe.display());
+    println!();
+    println!("Usage: Right-click a folder -> Scripts/Actions -> \"{}\"", MENU_LABEL);
     Ok(())
 }
+
+fn uninstall_linux() -> Result<()> {
+    let (nautilus_path, nemo_path, dolphin_path) = linux_paths()?;
+    let mut removed = 0;
+    for path in [&nautilus_path, &nemo_path, &dolphin_path] {
+        if path.exists() {
+            fs::remove_file(path)?;
+            println!("Removed: {}", path.display());
+            removed += 1;
+        }
+    }
+    if removed == 0 {
+        println!("Nothing to remove (no integrations found)");
+    }
+    Ok(())
+}
+
+// ===========================================================================
+// Windows -- Explorer context menu via registry
+// ===========================================================================
+
+fn install_windows() -> Result<()> {
+    let (exe, exe_str) = exe_path()?;
+    warn_if_build_dir(&exe_str);
+
+    let command_value = format!("\"{}\" --execute \"%V\"", exe_str);
+
+    // Right-click on a folder
+    run_reg(&[
+        "add",
+        r"HKCU\Software\Classes\Directory\shell\tagmv",
+        "/ve",
+        "/d",
+        MENU_LABEL,
+        "/f",
+    ])?;
+    run_reg(&[
+        "add",
+        r"HKCU\Software\Classes\Directory\shell\tagmv\command",
+        "/ve",
+        "/d",
+        &command_value,
+        "/f",
+    ])?;
+
+    // Right-click on folder background (inside a folder)
+    run_reg(&[
+        "add",
+        r"HKCU\Software\Classes\Directory\Background\shell\tagmv",
+        "/ve",
+        "/d",
+        MENU_LABEL,
+        "/f",
+    ])?;
+    run_reg(&[
+        "add",
+        r"HKCU\Software\Classes\Directory\Background\shell\tagmv\command",
+        "/ve",
+        "/d",
+        &command_value,
+        "/f",
+    ])?;
+
+    println!("Installed Windows Explorer context menu: \"{}\"", MENU_LABEL);
+    println!("  Binary: {}", exe.display());
+    println!();
+    println!("Usage: Right-click a folder in Explorer -> \"{}\"", MENU_LABEL);
+    Ok(())
+}
+
+fn uninstall_windows() -> Result<()> {
+    let keys = [
+        r"HKCU\Software\Classes\Directory\shell\tagmv",
+        r"HKCU\Software\Classes\Directory\Background\shell\tagmv",
+    ];
+    let mut removed = 0;
+    for key in &keys {
+        // /f = force (no prompt), failure is ok if key doesn't exist
+        if run_reg(&["delete", key, "/f"]).is_ok() {
+            println!("Removed: {}", key);
+            removed += 1;
+        }
+    }
+    if removed == 0 {
+        println!("Nothing to remove (registry keys not found)");
+    }
+    Ok(())
+}
+
+fn run_reg(args: &[&str]) -> Result<()> {
+    let output = std::process::Command::new("reg")
+        .args(args)
+        .output()
+        .context("Failed to run 'reg' command")?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        bail!("reg {} failed: {}", args.join(" "), stderr.trim());
+    }
+    Ok(())
+}
+
+// ===========================================================================
+// Tests
+// ===========================================================================
 
 #[cfg(test)]
 mod tests {
@@ -398,7 +622,10 @@ mod tests {
 
     #[test]
     fn shell_escape_simple_path() {
-        assert_eq!(shell_escape("/usr/local/bin/musicsort"), "'/usr/local/bin/musicsort'");
+        assert_eq!(
+            shell_escape("/usr/local/bin/tagmv"),
+            "'/usr/local/bin/tagmv'"
+        );
     }
 
     #[test]
@@ -413,16 +640,55 @@ mod tests {
 
     #[test]
     fn shell_escape_path_with_dollar() {
-        // Single-quoted strings don't expand $
         assert_eq!(shell_escape("/path/$HOME/bin"), "'/path/$HOME/bin'");
     }
 
     #[test]
     fn home_dir_returns_absolute() {
-        // This test relies on $HOME being set in the test environment
-        if std::env::var("HOME").is_ok() {
+        if std::env::var("HOME").is_ok() || std::env::var("USERPROFILE").is_ok() {
             let home = home_dir().unwrap();
             assert!(home.is_absolute());
         }
+    }
+
+    #[test]
+    fn linux_nautilus_script_content() {
+        let escaped = shell_escape("/usr/local/bin/tagmv");
+        let script = format!(
+            "#!/bin/bash\nIFS=$'\\n'\nfor f in $NAUTILUS_SCRIPT_SELECTED_FILE_PATHS; do\n  [ -d \"$f\" ] && {} --execute \"$f\"\ndone\n",
+            escaped
+        );
+        assert!(script.starts_with("#!/bin/bash"));
+        assert!(script.contains("'/usr/local/bin/tagmv'"));
+        assert!(script.contains("NAUTILUS_SCRIPT_SELECTED_FILE_PATHS"));
+    }
+
+    #[test]
+    fn linux_nemo_action_content() {
+        let action = format!(
+            "[Nemo Action]\nName={}\nExec={} --execute %F\n",
+            MENU_LABEL, "/usr/local/bin/tagmv"
+        );
+        assert!(action.contains("[Nemo Action]"));
+        assert!(action.contains("Sort Music by Tags"));
+        assert!(action.contains("--execute %F"));
+    }
+
+    #[test]
+    fn linux_dolphin_desktop_content() {
+        let desktop = format!(
+            "[Desktop Entry]\nType=Service\nMimeType=inode/directory;\nActions=tagmv\n\n[Desktop Action tagmv]\nName={}\nExec={} --execute %f\n",
+            MENU_LABEL, "/usr/local/bin/tagmv"
+        );
+        assert!(desktop.contains("Type=Service"));
+        assert!(desktop.contains("inode/directory"));
+        assert!(desktop.contains("[Desktop Action tagmv]"));
+    }
+
+    #[test]
+    fn windows_command_value_format() {
+        let exe = r"C:\Users\chris\bin\tagmv.exe";
+        let cmd = format!("\"{}\" --execute \"%V\"", exe);
+        assert_eq!(cmd, r#""C:\Users\chris\bin\tagmv.exe" --execute "%V""#);
     }
 }
