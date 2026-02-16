@@ -127,8 +127,10 @@ Ensure `~/bin` exists and is on your `PATH`.
 If you find this useful, consider supporting the project:
 
 <p>
-  <a href="https://buymeacoffee.com/YOUR_USERNAME"><img src="https://img.shields.io/badge/Buy%20Me%20a%20Coffee-ffdd00?style=flat&logo=buy-me-a-coffee&logoColor=black" alt="Buy Me a Coffee"></a>
-  <a href="https://ko-fi.com/YOUR_USERNAME"><img src="https://img.shields.io/badge/Ko--fi-FF5E5B?style=flat&logo=ko-fi&logoColor=white" alt="Ko-fi"></a>
+  <a href="https://buymeacoffee.com/d4kine"><img src="https://img.shields.io/badge/Buy%20Me%20a%20Coffee-ffdd00?style=flat&logo=buy-me-a-coffee&logoColor=black" alt="Buy Me a Coffee"></a>
+  <a href="https://ko-fi.com/d4kine"><img src="https://img.shields.io/badge/Ko--fi-FF5E5B?style=flat&logo=ko-fi&logoColor=white" alt="Ko-fi"></a>
+  <a href="https://paypal.me/kaubisch"><img src="https://img.shields.io/badge/PayPal-00457C?style=flat&logo=paypal&logoColor=white" alt="PayPal"></a>
+  <!--
   <a href="https://patreon.com/YOUR_USERNAME"><img src="https://img.shields.io/badge/Patreon-F96854?style=flat&logo=patreon&logoColor=white" alt="Patreon"></a>
-  <a href="https://paypal.me/YOUR_USERNAME"><img src="https://img.shields.io/badge/PayPal-00457C?style=flat&logo=paypal&logoColor=white" alt="PayPal"></a>
+  -->
 </p>
