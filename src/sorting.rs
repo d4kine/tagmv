@@ -64,28 +64,15 @@ pub fn compute_destination(base_dir: &Path, source: &Path, meta: &TrackMetadata)
     let album = sanitize(&meta.album);
     let folder_name = format!("{} - {}", artist, album);
 
-    let ext = source
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or_else(|| {
-            source
-                .file_name()
-                .and_then(|n| n.to_str())
-                .map(|n| n.rsplit_once('.').map_or("", |(_, e)| e))
-                .unwrap_or("")
-        });
+    let ext = crate::scan::file_extension(source).unwrap_or("");
 
-    let title = meta
-        .title
-        .as_deref()
-        .map(sanitize)
-        .unwrap_or_else(|| {
-            source
-                .file_stem()
-                .and_then(|s| s.to_str())
-                .unwrap_or("Unknown")
-                .to_string()
-        });
+    let title = meta.title.as_deref().map(sanitize).unwrap_or_else(|| {
+        source
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("Unknown")
+            .to_string()
+    });
 
     let file_name = match meta.track_number {
         Some(n) => format!("{:02} - {}.{}", n, title, ext),
@@ -139,11 +126,7 @@ pub fn resolve_conflicts(moves: &mut [PlannedMove]) {
                 .file_stem()
                 .and_then(|s| s.to_str())
                 .unwrap_or("file");
-            let ext = m
-                .dest
-                .extension()
-                .and_then(|e| e.to_str())
-                .unwrap_or("");
+            let ext = m.dest.extension().and_then(|e| e.to_str()).unwrap_or("");
             let parent = m.dest.parent().unwrap();
 
             let new_name = if ext.is_empty() {
@@ -202,10 +185,7 @@ pub fn execute_move(planned: &PlannedMove) -> Result<()> {
         Ok(()) => Ok(()),
         Err(e) => {
             // Only fall back to copy+delete for cross-device errors
-            let dominated_by_cross_device = matches!(
-                e.raw_os_error(),
-                Some(libc::EXDEV)
-            );
+            let dominated_by_cross_device = matches!(e.raw_os_error(), Some(libc::EXDEV));
             if !dominated_by_cross_device {
                 return Err(e).with_context(|| {
                     format!(
@@ -218,7 +198,10 @@ pub fn execute_move(planned: &PlannedMove) -> Result<()> {
 
             let source_len = fs::metadata(&planned.source)
                 .with_context(|| {
-                    format!("Failed to read source metadata: {}", planned.source.display())
+                    format!(
+                        "Failed to read source metadata: {}",
+                        planned.source.display()
+                    )
                 })?
                 .len();
 
@@ -326,7 +309,10 @@ mod tests {
         let result = compute_destination(&base, &source, &meta);
         assert_eq!(result.folder_name, "Artist - Album");
         assert_eq!(result.file_name, "01 - Song Title.m4a");
-        assert_eq!(result.dest, PathBuf::from("/music/Artist - Album/01 - Song Title.m4a"));
+        assert_eq!(
+            result.dest,
+            PathBuf::from("/music/Artist - Album/01 - Song Title.m4a")
+        );
     }
 
     #[test]
@@ -378,7 +364,10 @@ mod tests {
         let result = compute_unsorted_destination(&base, &source);
         assert_eq!(result.folder_name, "_Unsorted");
         assert_eq!(result.file_name, "weird file.m4a");
-        assert_eq!(result.dest, PathBuf::from("/music/_Unsorted/weird file.m4a"));
+        assert_eq!(
+            result.dest,
+            PathBuf::from("/music/_Unsorted/weird file.m4a")
+        );
     }
 
     #[test]
@@ -474,10 +463,7 @@ mod tests {
 
         let result = execute_move(&planned);
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("already exists"));
+        assert!(result.unwrap_err().to_string().contains("already exists"));
 
         let _ = fs::remove_dir_all(&tmp);
     }

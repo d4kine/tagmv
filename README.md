@@ -1,6 +1,6 @@
 # tagmv
 
-Rust CLI tool that organizes music files into `Artist - Album/01 - Title.ext` folder structure by reading audio tags. Dry-run by default.
+Rust CLI tool that organizes music files into `Artist - Album/01 - Title.ext` folder structure by reading audio tags. Moves files by default; use `--dry-run` to preview first.
 
 ## Usage
 
@@ -11,7 +11,7 @@ Arguments:
   [PATH]  Directory to sort (defaults to current directory)
 
 Options:
-  --execute       Actually move files (default is dry-run preview)
+  -n, --dry-run   Preview changes without moving any files
   -r, --recursive Scan subdirectories
   -h, --help      Print help
   -V, --version   Print version
@@ -24,9 +24,9 @@ Subcommands:
 ### Dry-run preview
 
 ```
-$ tagmv "/Users/chris/Downloads/Telegram Desktop"
+$ tagmv -n "/Users/chris/Downloads/Telegram Desktop"
 
-tagmv v0.1.0 -- DRY RUN (use --execute to move files)
+tagmv v0.2.0 -- DRY RUN (no files will be moved)
 
 Scanning: /Users/chris/Downloads/Telegram Desktop
 Found 39 audio files
@@ -39,10 +39,12 @@ Found 39 audio files
 Summary: 39 files -> 7 folders, 0 unsorted
 ```
 
-### Execute moves
+### Move files
+
+Running without `-n` prints the same preview and then moves the files:
 
 ```
-$ tagmv --execute "/path/to/music"
+$ tagmv "/path/to/music"
 ```
 
 ### Context menu integration
@@ -76,9 +78,8 @@ Right-click a folder -> **Scripts** or **Actions** -> **Sort Music by Tags**
 Adds entries under `HKCU\Software\Classes\Directory\shell\tagmv` (no admin needed).
 Right-click a folder in Explorer -> **Sort Music by Tags**
 
-> **Note:** The context menu runs in execute mode (`--execute`) immediately --
-> there is no dry-run preview. Run `tagmv <path>` from the terminal first
-> to preview changes.
+> **Note:** The context menu moves files immediately -- there is no dry-run
+> preview. Run `tagmv -n <path>` from the terminal first to preview changes.
 
 ## Sorting rules
 
