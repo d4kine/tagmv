@@ -1,6 +1,6 @@
 [package]
 name = "tagmv"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 license = "MIT"
 
@@ -11,3 +11,4 @@ colored = "3"
 walkdir = "2"
 anyhow = "1"
 libc = "0.2"
+dialoguer = "0.11"

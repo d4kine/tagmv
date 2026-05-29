@@ -1,5 +1,6 @@
 #![warn(clippy::all)]
 
+pub mod approve;
 pub mod cli;
 pub mod display;
 pub mod install;
@@ -9,6 +10,7 @@ pub mod tags;
 
 use anyhow::{Context, Result};
 use colored::Colorize;
+use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 
 use sorting::{
@@ -21,6 +23,8 @@ pub struct RunOptions {
     pub dir: PathBuf,
     pub execute: bool,
     pub recursive: bool,
+    /// Skip the interactive approval prompt and move every planned file.
+    pub assume_yes: bool,
 }
 
 /// Scan `dir`, read tags, compute destinations, and resolve conflicts.
@@ -72,23 +76,29 @@ pub fn run(opts: RunOptions) -> Result<()> {
     display::print_summary(&summary);
 
     if opts.execute {
+        let pending: Vec<&PlannedMove> = moves.iter().filter(|m| m.source != m.dest).collect();
+
+        let interactive = !opts.assume_yes && std::io::stdin().is_terminal();
+        let approved = if !pending.is_empty() && interactive {
+            println!();
+            approve::select(&pending)?
+        } else {
+            pending
+        };
+
         println!();
-        let (success, errors) = execute_all(&moves);
+        let (success, errors) = execute_all(&approved);
         display::report(success, errors);
     }
 
     Ok(())
 }
 
-fn execute_all(moves: &[PlannedMove]) -> (u32, u32) {
+fn execute_all(moves: &[&PlannedMove]) -> (u32, u32) {
     let mut success = 0u32;
     let mut errors = 0u32;
 
     for m in moves {
-        if m.source == m.dest {
-            continue;
-        }
-
         match execute_move(m) {
             Ok(()) => success += 1,
             Err(e) => {

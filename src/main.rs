@@ -22,5 +22,6 @@ fn main() -> Result<()> {
         dir,
         execute: !cli.dry_run,
         recursive: cli.recursive,
+        assume_yes: cli.yes,
     })
 }

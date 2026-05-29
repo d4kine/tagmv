@@ -12,6 +12,7 @@ Arguments:
 
 Options:
   -n, --dry-run   Preview changes without moving any files
+  -y, --yes       Skip the approval prompt and move all planned files
   -r, --recursive Scan subdirectories
   -h, --help      Print help
   -V, --version   Print version
@@ -41,11 +42,23 @@ Summary: 39 files -> 7 folders, 0 unsorted
 
 ### Move files
 
-Running without `-n` prints the same preview and then moves the files:
+Running without `-n` prints the same preview and then, in an interactive
+terminal, shows a checkbox list where you approve or deselect individual moves
+before anything happens:
 
 ```
 $ tagmv "/path/to/music"
+
+? Confirm moves (space toggles, a selects all, enter confirms)
+  [x] Chlär - Breakthrough - EP/01 - Close Contact.m4a  <- 01 Close Contact.m4a
+  [x] Chlär - Breakthrough - EP/02 - Pressure Point.m4a <- 02 Pressure Point.m4a
+  [ ] _Unsorted/random.mp3  <- random.mp3
 ```
+
+Only the checked items are moved. Use `-y`/`--yes` to skip the prompt and move
+everything. When there's no interactive terminal (piped input, CI, or the file
+manager context menu) the prompt is skipped automatically and the full plan
+runs.
 
 ### Context menu integration
 

@@ -11,6 +11,10 @@ pub struct Cli {
     #[arg(short = 'n', long = "dry-run")]
     pub dry_run: bool,
 
+    /// Skip the interactive approval prompt and move all planned files
+    #[arg(short = 'y', long = "yes")]
+    pub yes: bool,
+
     /// Scan subdirectories
     #[arg(short, long)]
     pub recursive: bool,
