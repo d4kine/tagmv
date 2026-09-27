@@ -9,6 +9,7 @@ fn main() -> Result<()> {
     match cli.command {
         Some(Commands::Install) => return install::install_quick_action(),
         Some(Commands::Uninstall) => return install::uninstall_quick_action(),
+        Some(Commands::Status) => return install::status(),
         None => {}
     }
 

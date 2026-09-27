@@ -5,7 +5,7 @@ mod linux;
 mod macos;
 mod windows;
 
-pub(crate) const MENU_LABEL: &str = "Sort Music by Tags";
+pub(crate) const MENU_LABEL: &str = "tagmv";
 
 // ---------------------------------------------------------------------------
 // Public entry points
@@ -32,6 +32,21 @@ pub fn uninstall_quick_action() -> Result<()> {
         windows::uninstall()
     } else {
         bail!("Unsupported platform for context menu removal")
+    }
+}
+
+/// Print whether the integration is installed (and, on macOS, enabled in
+/// System Settings). Returns `Err` when it is not installed so `make install`
+/// can surface that.
+pub fn status() -> Result<()> {
+    if cfg!(target_os = "macos") {
+        macos::status()
+    } else if cfg!(target_os = "linux") {
+        linux::status()
+    } else if cfg!(target_os = "windows") {
+        windows::status()
+    } else {
+        bail!("Unsupported platform for context menu integration")
     }
 }
 

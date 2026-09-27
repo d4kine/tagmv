@@ -81,7 +81,13 @@ pub fn run(opts: RunOptions) -> Result<()> {
         let interactive = !opts.assume_yes && std::io::stdin().is_terminal();
         let approved = if !pending.is_empty() && interactive {
             println!();
-            approve::select(&pending)?
+            match approve::select(&pending)? {
+                Some(chosen) => chosen,
+                None => {
+                    println!("Aborted, nothing moved");
+                    return Ok(());
+                }
+            }
         } else {
             pending
         };
@@ -89,6 +95,9 @@ pub fn run(opts: RunOptions) -> Result<()> {
         println!();
         let (success, errors) = execute_all(&approved);
         display::report(success, errors);
+        if errors > 0 {
+            anyhow::bail!("{} moves failed", errors);
+        }
     }
 
     Ok(())

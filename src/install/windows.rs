@@ -79,6 +79,16 @@ pub(super) fn uninstall() -> Result<()> {
     Ok(())
 }
 
+pub(super) fn status() -> Result<()> {
+    let key = r"HKCU\Software\Classes\Directory\shell\tagmv";
+    if run_reg(&["query", key]).is_ok() {
+        println!("  installed {}", key);
+        Ok(())
+    } else {
+        bail!("Context menu not installed. Run: tagmv install")
+    }
+}
+
 fn run_reg(args: &[&str]) -> Result<()> {
     let output = std::process::Command::new("reg")
         .args(args)

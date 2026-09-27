@@ -9,17 +9,22 @@ fn label(m: &PlannedMove) -> String {
 }
 
 /// Show an interactive checkbox list (everything pre-checked) and return the
-/// subset of moves the user approved. Deselecting an item skips that move.
-pub fn select<'a>(moves: &[&'a PlannedMove]) -> Result<Vec<&'a PlannedMove>> {
+/// subset of moves the user approved, or `None` when they aborted with Esc/q.
+/// Deselecting an item skips that move.
+pub fn select<'a>(moves: &[&'a PlannedMove]) -> Result<Option<Vec<&'a PlannedMove>>> {
     let items: Vec<String> = moves.iter().map(|m| label(m)).collect();
     let defaults = vec![true; moves.len()];
 
     let chosen = MultiSelect::with_theme(&ColorfulTheme::default())
-        .with_prompt("Confirm moves (space toggles, a selects all, enter confirms)")
+        .with_prompt("Confirm moves (space toggles, a selects all, enter confirms, esc aborts)")
         .items(&items)
         .defaults(&defaults)
-        .interact()
+        .interact_opt()
+        .inspect_err(|_| {
+            // dialoguer leaves the cursor hidden when interrupted (Ctrl-C)
+            let _ = dialoguer::console::Term::stderr().show_cursor();
+        })
         .context("Approval prompt failed")?;
 
-    Ok(chosen.into_iter().map(|i| moves[i]).collect())
+    Ok(chosen.map(|idx| idx.into_iter().map(|i| moves[i]).collect()))
 }

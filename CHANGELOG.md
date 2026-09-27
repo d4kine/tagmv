@@ -5,7 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
-## [Unreleased] 
+## [Unreleased]
+
+### Added
+- `tagmv status` subcommand: reports whether the context menu is installed; on macOS also whether it is enabled in System Settings (read from `pbs.plist`). `make install` runs it, `make menu-status` exposes it
+- macOS Quick Action reports results: last summary line as a notification, failures as a dialog with the full output; selected files map to their parent folder, each folder is processed once; a dialog is shown when the binary is missing
+- `contrib/tagmv.workflow`: ready-made Quick Action bundle (double-click to install) that resolves `tagmv` from `PATH` at run time; a snapshot test keeps it in sync with the generator
+- `tagmv install` on macOS refreshes the Services cache (`pbs -update`) so the Quick Action appears without restarting Finder
+- Album artist tag is preferred over the track artist for the folder name (compilations stay together)
+- Scanning a folder that is already named `Artist - Album` (or `_Unsorted`) renames files in place instead of nesting a second folder level
+- Approval prompt can be aborted with Esc/`q` ("Aborted, nothing moved")
+
+### Changed
+- Exit code is 1 when at least one move failed
+- Track number `0` is treated as missing (no `00 - ` prefix)
+- Sanitized path components are capped at 100 bytes (avoids `ENAMETOOLONG`)
+- Symlinks are skipped during scanning
+- `same-file` dependency (already pulled in by `walkdir`) for identity checks
+
+### Fixed
+- Re-running with `-r` no longer renames `Title (1).ext` to `(2)`, `(3)`, ... on every run; a destination that is the same file as the source counts as already in place (also fixes spurious `(1)` suffixes for case-only differences on APFS/NTFS)
+- Ctrl-C in the approval prompt no longer leaves the terminal cursor hidden
 
 ## [0.3.0] - 2026-05-29
 

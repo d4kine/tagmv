@@ -522,6 +522,7 @@ dependencies = [
  "dialoguer",
  "libc",
  "lofty",
+ "same-file",
  "walkdir",
 ]
 

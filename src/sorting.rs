@@ -12,6 +12,11 @@ const RESERVED_NAMES: &[&str] = &[
 
 const MAX_CONFLICT_ATTEMPTS: u32 = 10_000;
 
+/// Byte cap per sanitized path component. Folder names combine two components
+/// plus " - ", file names add a track prefix, extension and conflict suffix;
+/// 100 keeps every final name well under the 255-byte filesystem limit.
+const MAX_COMPONENT_BYTES: usize = 100;
+
 /// Sanitize a string for safe use in filenames.
 /// Mirrors `slugify_for_filename` from rename_audio_by_tags.py.
 pub fn sanitize(s: &str) -> String {
@@ -29,8 +34,13 @@ pub fn sanitize(s: &str) -> String {
     // Collapse whitespace
     let collapsed: String = out.split_whitespace().collect::<Vec<_>>().join(" ");
 
-    // Trim dots and spaces
-    let trimmed = collapsed
+    let cut = (0..=MAX_COMPONENT_BYTES.min(collapsed.len()))
+        .rev()
+        .find(|&i| collapsed.is_char_boundary(i))
+        .unwrap_or(0);
+
+    // Trim dots and spaces (again after the cut, which may expose them)
+    let trimmed = collapsed[..cut]
         .trim_matches(|c: char| c == '.' || c == ' ')
         .to_string();
 
@@ -58,6 +68,20 @@ pub struct PlannedMove {
     pub file_name: String,
 }
 
+/// `base_dir` itself is the target folder when its name already matches
+/// (right-clicking an album folder must not nest `Artist - Album/Artist - Album/`).
+fn target_dir(base_dir: &Path, folder_name: &str) -> PathBuf {
+    if base_dir.file_name().and_then(|n| n.to_str()) == Some(folder_name) {
+        base_dir.to_path_buf()
+    } else {
+        base_dir.join(folder_name)
+    }
+}
+
+fn is_same(a: &Path, b: &Path) -> bool {
+    same_file::is_same_file(a, b).unwrap_or(false)
+}
+
 /// Compute destination path for a file with known tags.
 pub fn compute_destination(base_dir: &Path, source: &Path, meta: &TrackMetadata) -> PlannedMove {
     let artist = sanitize(&meta.artist);
@@ -79,7 +103,7 @@ pub fn compute_destination(base_dir: &Path, source: &Path, meta: &TrackMetadata)
         None => format!("{}.{}", title, ext),
     };
 
-    let dest = base_dir.join(&folder_name).join(&file_name);
+    let dest = target_dir(base_dir, &folder_name).join(&file_name);
 
     PlannedMove {
         source: source.to_path_buf(),
@@ -98,7 +122,7 @@ pub fn compute_unsorted_destination(base_dir: &Path, source: &Path) -> PlannedMo
         .to_string();
 
     let folder_name = "_Unsorted".to_string();
-    let dest = base_dir.join(&folder_name).join(&file_name);
+    let dest = target_dir(base_dir, &folder_name).join(&file_name);
 
     PlannedMove {
         source: source.to_path_buf(),
@@ -117,10 +141,20 @@ pub fn resolve_conflicts(moves: &mut [PlannedMove]) {
             continue;
         }
 
+        // ponytail: a dest that is the source itself (case-only difference on
+        // APFS/NTFS, or a "(n)" suffix from an earlier run) counts as already
+        // in place; case-only renames are not performed.
+        if is_same(&m.source, &m.dest) {
+            m.dest = m.source.clone();
+            continue;
+        }
+
         let mut candidate = m.dest.clone();
         let mut counter = 1u32;
 
-        while candidate.exists() || claimed.contains(&candidate) {
+        while (candidate.exists() && !is_same(&candidate, &m.source))
+            || claimed.contains(&candidate)
+        {
             let stem = m
                 .dest
                 .file_stem()
@@ -145,6 +179,11 @@ pub fn resolve_conflicts(moves: &mut [PlannedMove]) {
                     break;
                 }
             };
+        }
+
+        if is_same(&candidate, &m.source) {
+            m.dest = m.source.clone();
+            continue;
         }
 
         if candidate != m.dest {
@@ -278,6 +317,15 @@ mod tests {
     }
 
     #[test]
+    fn sanitize_caps_length_at_char_boundary() {
+        let long = sanitize(&"ä".repeat(300));
+        assert!(long.len() <= MAX_COMPONENT_BYTES);
+        assert!(long.chars().all(|c| c == 'ä'));
+        let dots = sanitize(&format!("{}. x", "a".repeat(MAX_COMPONENT_BYTES - 1)));
+        assert!(!dots.ends_with('.'));
+    }
+
+    #[test]
     fn sanitize_reserved_names() {
         assert_eq!(sanitize("CON"), "_CON");
         assert_eq!(sanitize("con"), "_con");
@@ -358,6 +406,25 @@ mod tests {
     }
 
     #[test]
+    fn compute_destination_inside_matching_album_folder_does_not_nest() {
+        let base = PathBuf::from("/music/Artist - Album");
+        let source = PathBuf::from("/music/Artist - Album/01 Song.m4a");
+        let meta = TrackMetadata {
+            artist: "Artist".to_string(),
+            album: "Album".to_string(),
+            title: Some("Song Title".to_string()),
+            track_number: Some(1),
+        };
+        let result = compute_destination(&base, &source, &meta);
+        assert_eq!(
+            result.dest,
+            PathBuf::from("/music/Artist - Album/01 - Song Title.m4a")
+        );
+        let unsorted = compute_unsorted_destination(Path::new("/music/_Unsorted"), &source);
+        assert_eq!(unsorted.dest, PathBuf::from("/music/_Unsorted/01 Song.m4a"));
+    }
+
+    #[test]
     fn compute_unsorted_preserves_filename() {
         let base = PathBuf::from("/music");
         let source = PathBuf::from("/downloads/weird file.m4a");
@@ -390,6 +457,27 @@ mod tests {
         assert_eq!(moves[0].file_name, "song.mp3");
         assert_eq!(moves[1].file_name, "song (1).mp3");
         assert_ne!(moves[0].dest, moves[1].dest);
+    }
+
+    #[test]
+    fn resolve_conflicts_treats_own_suffixed_name_as_in_place() {
+        let tmp = std::env::temp_dir().join("tagmv_test_self_conflict");
+        let _ = fs::remove_dir_all(&tmp);
+        fs::create_dir_all(&tmp).unwrap();
+        fs::write(tmp.join("song.mp3"), "other").unwrap();
+        let source = tmp.join("song (1).mp3");
+        fs::write(&source, "me").unwrap();
+
+        let mut moves = vec![PlannedMove {
+            source: source.clone(),
+            dest: tmp.join("song.mp3"),
+            folder_name: "f".to_string(),
+            file_name: "song.mp3".to_string(),
+        }];
+        resolve_conflicts(&mut moves);
+        assert_eq!(moves[0].dest, source);
+
+        let _ = fs::remove_dir_all(&tmp);
     }
 
     #[test]

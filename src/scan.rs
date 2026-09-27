@@ -45,7 +45,8 @@ pub fn scan_files(dir: &Path, recursive: bool) -> Result<Vec<PathBuf>> {
             .filter_map(|e| e.ok())
         {
             let path = entry.path().to_path_buf();
-            if path.is_file()
+            if !entry.file_type().is_symlink()
+                && path.is_file()
                 && is_audio_file(&path)
                 && !is_hidden(&entry.file_name().to_string_lossy())
             {
@@ -57,7 +58,8 @@ pub fn scan_files(dir: &Path, recursive: bool) -> Result<Vec<PathBuf>> {
             .with_context(|| format!("Failed to read directory: {}", dir.display()))?;
         for entry in entries.filter_map(|e| e.ok()) {
             let path = entry.path();
-            if path.is_file() && is_audio_file(&path) {
+            let is_symlink = entry.file_type().map(|t| t.is_symlink()).unwrap_or(true);
+            if !is_symlink && path.is_file() && is_audio_file(&path) {
                 let name = entry.file_name().to_string_lossy().to_string();
                 if !is_hidden(&name) {
                     files.push(path);
@@ -109,6 +111,8 @@ mod tests {
         fs::write(tmp.join(".hidden.mp3"), "x").unwrap();
         fs::create_dir_all(tmp.join("sub")).unwrap();
         fs::write(tmp.join("sub/c.mp3"), "x").unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(tmp.join("a.mp3"), tmp.join("link.mp3")).unwrap();
 
         let found = scan_files(&tmp, false).unwrap();
         let names: Vec<String> = found

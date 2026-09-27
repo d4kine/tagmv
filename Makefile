@@ -6,7 +6,7 @@ BIN    := tagmv
 TARGET := target/release/$(BIN)
 
 .PHONY: all build release test fmt fmt-check clippy check \
-        install uninstall menu-install menu-uninstall clean help
+        install uninstall menu-install menu-uninstall menu-status clean help
 
 all: build ## Default: debug build
 
@@ -36,6 +36,8 @@ install: release ## Build release and copy the binary to BINDIR
 	@echo "Installed $(BIN) to $(BINDIR)/$(BIN)"
 	@case ":$$PATH:" in *":$(BINDIR):"*) ;; \
 		*) echo "Note: $(BINDIR) is not on your PATH.";; esac
+	@echo "Context menu:"
+	@"$(BINDIR)/$(BIN)" status || echo "  Run 'make menu-install' to add it."
 
 uninstall: ## Remove the installed binary from BINDIR
 	rm -f "$(BINDIR)/$(BIN)"
@@ -46,6 +48,9 @@ menu-install: install ## Install binary + file manager context menu
 
 menu-uninstall: ## Remove the file manager context menu
 	"$(BINDIR)/$(BIN)" uninstall
+
+menu-status: ## Show whether the context menu is installed (and enabled on macOS)
+	"$(BINDIR)/$(BIN)" status
 
 clean: ## Remove build artifacts
 	cargo clean

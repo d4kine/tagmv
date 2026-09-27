@@ -2,6 +2,7 @@ use super::{exe_path, home_dir, shell_escape, warn_if_build_dir, xml_escape, MEN
 use anyhow::{Context, Result};
 use std::fs;
 use std::path::PathBuf;
+use std::process::Command;
 
 fn workflow_dir() -> Result<PathBuf> {
     Ok(home_dir()?
@@ -27,25 +28,97 @@ pub(super) fn install() -> Result<()> {
 
     fs::write(
         contents_dir.join("document.wflow"),
-        document_wflow(&exe_str),
+        document_wflow(&shell_escape(&exe_str)),
     )
     .context("Failed to write document.wflow")?;
     fs::write(contents_dir.join("Info.plist"), info_plist())
         .context("Failed to write Info.plist")?;
 
+    // Best effort: re-scan ~/Library/Services so the action shows up without a Finder restart.
+    let _ = Command::new("/System/Library/CoreServices/pbs")
+        .arg("-update")
+        .status();
+
     println!("Installed macOS Quick Action: \"{}\"", MENU_LABEL);
     println!("  Location: {}", wf_dir.display());
     println!("  Binary:   {}", exe.display());
     println!();
-    println!("Next steps:");
-    println!("  1. Open System Settings -> Privacy & Security -> Extensions -> Finder");
-    println!("  2. Enable \"{}\"", MENU_LABEL);
-    println!("  3. If it doesn't appear, run: killall Finder");
+    println!("Status:");
+    status()?;
+    println!();
+    println!("If the action does not show up in Finder, run: killall Finder");
     println!();
     println!(
-        "Usage: Right-click a folder in Finder -> Quick Actions -> \"{}\"",
+        "Usage: Right-click a folder (or files inside it) in Finder -> Quick Actions -> \"{}\"",
         MENU_LABEL
     );
+    println!(
+        "Files are moved immediately; the result is shown as a notification, errors as a dialog."
+    );
+    Ok(())
+}
+
+/// Enabled state as recorded by pbs (System Settings -> Extensions -> Finder).
+#[derive(Debug, PartialEq)]
+enum Enabled {
+    Yes,
+    No,
+    /// pbs has not picked up the workflow yet (no entry).
+    Unknown,
+}
+
+/// Parse `defaults read pbs NSServicesStatus` output. A missing
+/// `enabled_context_menu` key means "enabled" (macOS default).
+fn parse_enabled(services_status: &str) -> Enabled {
+    let key = format!("- {} - runWorkflowAsService\"", MENU_LABEL);
+    let Some(start) = services_status.find(&key) else {
+        return Enabled::Unknown;
+    };
+    // The entry's dict closes with `};` at the same indentation as its key line.
+    let line_start = services_status[..start].rfind('\n').map_or(0, |i| i + 1);
+    let indent: String = services_status[line_start..]
+        .chars()
+        .take_while(|c| *c == ' ')
+        .collect();
+    let rest = &services_status[start + key.len()..];
+    let closer = format!("\n{}}};", indent);
+    let block = rest.find(&closer).map_or(rest, |end| &rest[..end]);
+    if block.contains("\"enabled_context_menu\" = 0") {
+        Enabled::No
+    } else {
+        Enabled::Yes
+    }
+}
+
+fn enabled_state() -> Enabled {
+    Command::new("defaults")
+        .args(["read", "pbs", "NSServicesStatus"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| parse_enabled(&String::from_utf8_lossy(&o.stdout)))
+        .unwrap_or(Enabled::Unknown)
+}
+
+pub(super) fn status() -> Result<()> {
+    let wf_dir = workflow_dir()?;
+    if !wf_dir.exists() {
+        anyhow::bail!(
+            "Quick Action not installed ({} missing). Run: tagmv install",
+            wf_dir.display()
+        );
+    }
+    println!("  installed {}", wf_dir.display());
+    match enabled_state() {
+        Enabled::Yes => println!("  enabled   in System Settings -> Extensions -> Finder"),
+        Enabled::No => {
+            println!("  DISABLED  in System Settings -> Extensions -> Finder");
+            println!("            open x-apple.systempreferences:com.apple.ExtensionsPreferences");
+        }
+        Enabled::Unknown => {
+            println!("  pending   not yet registered by macOS; run: /System/Library/CoreServices/pbs -update");
+        }
+    }
     Ok(())
 }
 
@@ -60,12 +133,48 @@ pub(super) fn uninstall() -> Result<()> {
     Ok(())
 }
 
-fn document_wflow(binary_path: &str) -> String {
-    let shell_safe = shell_escape(binary_path);
-    let xml_safe_script = xml_escape(&format!(
-        "for f in \"$@\"; do\n  if [ -d \"$f\" ]; then\n    {} \"$f\"\n  fi\ndone",
-        shell_safe
-    ));
+/// zsh script run by the Quick Action. Runs `tagmv -y` per selected folder
+/// (files map to their parent folder, each folder once) and reports through
+/// `display notification` / `display dialog`. All dynamic values reach
+/// osascript as argv, never interpolated into AppleScript source.
+/// `tool` is inserted verbatim after `tool=`, so it must already be shell-safe.
+fn quick_action_script(tool: &str) -> String {
+    format!(
+        r#"tool={tool}
+notify() {{ /usr/bin/osascript -e 'on run argv' -e 'display notification (item 2 of argv) with title "{label}" subtitle (item 1 of argv)' -e 'end run' "$1" "$2"; }}
+fail() {{ /usr/bin/osascript -e 'on run argv' -e 'display dialog (item 2 of argv) with title "{label}" buttons {{"OK"}} default button "OK" with icon stop' -e 'end run' "$1" "$2" >/dev/null; }}
+
+if [[ ! -x "$tool" ]]; then
+  fail "" "tagmv not found or not executable: $tool"
+  exit 0
+fi
+
+typeset -A seen
+for item in "$@"; do
+  if [[ -d "$item" ]]; then
+    dir="$item"
+  elif [[ -f "$item" ]]; then
+    dir="${{item:h}}"
+  else
+    continue
+  fi
+  [[ -n ${{seen[$dir]-}} ]] && continue
+  seen[$dir]=1
+
+  out=$("$tool" -y -- "$dir" 2>&1); rc=$?
+  if (( rc == 0 )); then
+    notify "${{dir:t}}" "${{${{(f)out}}[-1]}}"
+  else
+    fail "${{dir:t}}" "${{dir}}"$'\n\n'"${{out[-1500,-1]}}"
+  fi
+done"#,
+        tool = tool,
+        label = MENU_LABEL,
+    )
+}
+
+fn document_wflow(tool: &str) -> String {
+    let xml_safe_script = xml_escape(&quick_action_script(tool));
 
     format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -300,8 +409,9 @@ fn document_wflow(binary_path: &str) -> String {
     )
 }
 
-fn info_plist() -> &'static str {
-    r#"<?xml version="1.0" encoding="UTF-8"?>
+fn info_plist() -> String {
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
@@ -317,7 +427,7 @@ fn info_plist() -> &'static str {
 			<key>NSMenuItem</key>
 			<dict>
 				<key>default</key>
-				<string>Sort Music by Tags</string>
+				<string>{label}</string>
 			</dict>
 			<key>NSMessage</key>
 			<string>runWorkflowAsService</string>
@@ -333,5 +443,73 @@ fn info_plist() -> &'static str {
 		</dict>
 	</array>
 </dict>
-</plist>"#
+</plist>"#,
+        label = MENU_LABEL
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn quick_action_script_runs_tagmv_non_interactively() {
+        let script = quick_action_script(&shell_escape("/opt/it's/tagmv"));
+        assert!(script.starts_with("tool='/opt/it'\"'\"'s/tagmv'\n"));
+        assert!(script.contains("\"$tool\" -y -- \"$dir\""));
+        assert!(script.contains("display notification"));
+        assert!(script.contains("display dialog"));
+        assert!(script.contains("dir=\"${item:h}\""));
+    }
+
+    #[test]
+    fn document_wflow_is_xml_escaped() {
+        let wflow = document_wflow(&shell_escape("/usr/local/bin/tagmv"));
+        assert!(wflow.contains("&amp;&amp; continue"));
+        assert!(wflow.contains("&quot;$tool&quot; -y -- &quot;$dir&quot;"));
+        assert!(wflow.contains("<string>tool=&apos;/usr/local/bin/tagmv&apos;"));
+    }
+
+    #[test]
+    fn parse_enabled_states() {
+        let on = "{\n    \"(null) - tagmv - runWorkflowAsService\" = {\n        \"presentation_modes\" = { ContextMenu = 1; };\n    };\n    \"com.apple.Safari - Search - x\" = {\n        \"enabled_context_menu\" = 0;\n    };\n}";
+        assert_eq!(parse_enabled(on), Enabled::Yes);
+        let off = "{\n    \"(null) - tagmv - runWorkflowAsService\" = {\n        \"enabled_context_menu\" = 0;\n        \"enabled_services_menu\" = 0;\n    };\n}";
+        assert_eq!(parse_enabled(off), Enabled::No);
+        assert_eq!(parse_enabled("{\n}"), Enabled::Unknown);
+    }
+
+    /// Tool expression for the checked-in `contrib/` workflow: resolve `tagmv`
+    /// from PATH at run time, falling back to `~/bin/tagmv`.
+    const PORTABLE_TOOL: &str =
+        r#""$(command -v tagmv 2>/dev/null || print -r -- "$HOME/bin/tagmv")""#;
+
+    /// The checked-in workflow bundle must match the generator.
+    /// Regenerate with: UPDATE_WORKFLOW=1 cargo test contrib_workflow
+    #[test]
+    fn contrib_workflow_matches_generator() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("contrib")
+            .join(format!("{}.workflow", MENU_LABEL))
+            .join("Contents");
+        let expected = [
+            ("document.wflow", document_wflow(PORTABLE_TOOL)),
+            ("Info.plist", info_plist()),
+        ];
+        if std::env::var_os("UPDATE_WORKFLOW").is_some() {
+            fs::create_dir_all(&root).unwrap();
+            for (name, content) in &expected {
+                fs::write(root.join(name), content).unwrap();
+            }
+        }
+        for (name, content) in &expected {
+            let on_disk = fs::read_to_string(root.join(name))
+                .unwrap_or_else(|e| panic!("{}: {e} (run with UPDATE_WORKFLOW=1)", name));
+            assert_eq!(
+                &on_disk, content,
+                "{} is stale, run with UPDATE_WORKFLOW=1",
+                name
+            );
+        }
+    }
 }

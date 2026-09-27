@@ -29,4 +29,6 @@ pub enum Commands {
     Install,
     /// Remove file manager context menu integration
     Uninstall,
+    /// Show whether the context menu integration is installed and enabled
+    Status,
 }

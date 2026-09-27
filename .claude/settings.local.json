@@ -6,5 +6,8 @@
       "Bash(cargo clippy *)",
       "Bash(cargo test *)"
     ]
+  },
+  "skillOverrides": {
+    "remove-ai-marks": "name-only"
   }
 }

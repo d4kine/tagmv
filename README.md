@@ -20,6 +20,7 @@ Options:
 Subcommands:
   install         Install file manager context menu
   uninstall       Remove file manager context menu
+  status          Show whether the context menu is installed (and enabled on macOS)
 ```
 
 ### Dry-run preview
@@ -63,51 +64,75 @@ runs.
 ### Context menu integration
 
 ```
-tagmv install       # add "Sort Music by Tags" to your file manager
+tagmv install       # add "tagmv" to your file manager
 tagmv uninstall     # remove it
+tagmv status        # installed? enabled in System Settings (macOS)?
 ```
+
+`make install` copies the binary and runs `tagmv status` afterwards, so a
+missing or disabled context menu is reported right away.
 
 `tagmv install` auto-detects the OS and installs the appropriate integration:
 
 **macOS** -- Finder Quick Action (Automator workflow)
 
-After running `tagmv install`:
-1. Open **System Settings -> Privacy & Security -> Extensions -> Finder**
-2. Enable **Sort Music by Tags**
-3. If it doesn't appear, run `killall Finder`
-4. Right-click a folder -> **Quick Actions** -> **Sort Music by Tags**
+`tagmv install` writes `~/Library/Services/tagmv.workflow`, refreshes the
+Services cache (`pbs -update`) and prints the status. `tagmv status` reads the
+enabled state from `~/Library/Preferences/pbs.plist`, the same data behind
+**System Settings -> Privacy & Security -> Extensions -> Finder**. If it
+reports DISABLED, toggle **tagmv** on there. If the action does not show up in
+Finder, run `killall Finder`.
+
+Right-click a folder, or files inside it -> **Quick Actions** -> **tagmv**
+
+The Quick Action runs `tagmv -y` on every selected folder (selected files map
+to their parent folder, each folder once). The last summary line is shown as a
+macOS notification; if any move fails, a dialog shows the full tagmv output.
+
+Without running `tagmv install`, double-click
+`contrib/tagmv.workflow` and confirm the install prompt. This
+copy looks up `tagmv` on `PATH` at run time (fallback `~/bin/tagmv`) instead
+of embedding an absolute binary path. It is generated from the same template;
+`UPDATE_WORKFLOW=1 cargo test contrib_workflow` regenerates it.
 
 **Linux** -- Nautilus, Nemo, and Dolphin
 
 Installs context menu entries for all three file managers:
-- Nautilus (GNOME): `~/.local/share/nautilus/scripts/Sort Music by Tags`
+- Nautilus (GNOME): `~/.local/share/nautilus/scripts/tagmv`
 - Nemo (Cinnamon): `~/.local/share/nemo/actions/tagmv.nemo_action`
 - Dolphin (KDE): `~/.local/share/kio/servicemenus/tagmv.desktop`
 
-Right-click a folder -> **Scripts** or **Actions** -> **Sort Music by Tags**
+Right-click a folder -> **Scripts** or **Actions** -> **tagmv**
 
 **Windows** -- Explorer context menu (registry)
 
 Adds entries under `HKCU\Software\Classes\Directory\shell\tagmv` (no admin needed).
-Right-click a folder in Explorer -> **Sort Music by Tags**
+Right-click a folder in Explorer -> **tagmv**
 
 > **Note:** The context menu moves files immediately -- there is no dry-run
 > preview. Run `tagmv -n <path>` from the terminal first to preview changes.
+> Exit code is 1 when at least one move failed, 0 otherwise (including
+> an aborted approval prompt via Esc/q).
 
 ## Sorting rules
 
 - Files with non-empty **artist** and **album** tags -> `Artist - Album/01 - Title.ext`
+- **Album artist** is preferred over the track artist when set (keeps compilations in one folder)
 - Files missing or with empty artist/album tags -> `_Unsorted/`
-- Track numbers are zero-padded (`01`, `02`, ...); files without a track number omit the prefix
+- Track numbers are zero-padded (`01`, `02`, ...); files without a track number (or `0`) omit the prefix
 - If no title tag, the original filename stem is used
-- Files already at their correct destination are skipped
+- Files already at their correct destination are skipped; a destination that
+  is the same file as the source (case-only difference, or an earlier `(1)`
+  suffix) also counts as in place and is never renamed again
+- If the scanned folder is already named `Artist - Album` (or `_Unsorted`),
+  files are renamed inside it instead of being nested one level deeper
 - Conflict resolution appends `(1)`, `(2)`, etc.
 - Cross-device moves fall back to copy + delete
 
 ## Scanning behavior
 
 - By default only the top-level directory is scanned; use `-r` for subdirectories
-- Hidden files and directories (dotfiles) are always skipped
+- Hidden files and directories (dotfiles) and symlinks are always skipped
 - The `_Unsorted/` directory is skipped during recursive scanning
 
 ## Supported formats
@@ -121,6 +146,7 @@ Tag reading is handled by [lofty](https://crates.io/crates/lofty).
 - `/` and `\` -> `-` (handles artists like AC/DC)
 - Removes `: * ? " < > |` and control characters
 - Collapses whitespace, trims dots and spaces
+- Each component (artist, album, title) is capped at 100 bytes on a character boundary
 - Empty result after sanitization falls back to "Unknown"
 
 ## Build

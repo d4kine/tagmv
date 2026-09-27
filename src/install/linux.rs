@@ -93,6 +93,24 @@ pub(super) fn uninstall() -> Result<()> {
     Ok(())
 }
 
+pub(super) fn status() -> Result<()> {
+    let (nautilus_path, nemo_path, dolphin_path) = paths()?;
+    let mut installed = 0;
+    for path in [&nautilus_path, &nemo_path, &dolphin_path] {
+        let mark = if path.exists() {
+            installed += 1;
+            "installed"
+        } else {
+            "missing"
+        };
+        println!("  {:9} {}", mark, path.display());
+    }
+    if installed == 0 {
+        anyhow::bail!("Context menu not installed. Run: tagmv install");
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -110,7 +128,7 @@ mod tests {
     fn nemo_action_content() {
         let action = nemo_action("/usr/local/bin/tagmv");
         assert!(action.contains("[Nemo Action]"));
-        assert!(action.contains("Sort Music by Tags"));
+        assert!(action.contains("Name=tagmv\n"));
         assert!(action.contains("Exec=/usr/local/bin/tagmv %F"));
         assert!(!action.contains("--execute"));
     }
